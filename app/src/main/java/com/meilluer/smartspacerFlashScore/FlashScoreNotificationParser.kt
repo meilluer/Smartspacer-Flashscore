@@ -70,13 +70,12 @@ object FlashScoreNotificationParser {
                 match.target_visibility = false
             }
             "goal" in contentLower || "⚽" in contentLower -> {
-                match.extras = "Goal scored!"
                 match.target_visibility = true
-                parseGoalDetails(match, subtitle)
+                parseGoalDetails(context, match, subtitle)
             }
             else -> {
-                if (match.extras.isBlank() || match.extras == "Match started") {
-                    match.extras = "In-Play"
+                if (match.extras.isBlank() || match.extras == "Match started" || match.extras == "No active match") {
+                    match.extras = "In Play"
                 }
                 match.target_visibility = true
             }
@@ -124,7 +123,7 @@ object FlashScoreNotificationParser {
             .trim()
     }
 
-    private fun parseGoalDetails(match: MatchState, subtitle: String) {
+    private fun parseGoalDetails(context: Context, match: MatchState, subtitle: String) {
         val lines = subtitle.lines()
         val namesList = mutableListOf<String>()
         var extractedHomeScore: Int? = null
@@ -176,7 +175,30 @@ object FlashScoreNotificationParser {
             }
 
             match.scorers = currentScorersList.joinToString(", ").ifBlank { "Scorer not available" }
-            match.extras = "Goal: ${namesList.last()}"
+            
+            // Set the subtitle to the goal scorer(s)
+            val scorerText = namesList.joinToString(", ")
+            match.extras = scorerText
+
+            // Schedule resetting the subtitle back to "In Play" after 2 minutes
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                // Check if the match is still active, hasn't transitioned to HT/FT, and still shows the scorer
+                if (match.extras == scorerText && match.flag && match.extras != "Half Time" && match.extras != "Finished") {
+                    match.extras = "In Play"
+                    
+                    // Notify Smartspacer
+                    try {
+                        SmartspacerTargetProvider.notifyChange(context, Target::class.java, "smartspacer_falshscore")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to notify Smartspacer target change in delayed goal handler", e)
+                    }
+
+                    // Notify UI
+                    val updateIntent = Intent("com.meilluer.smartspacerFlashScore.UPDATE_MATCH_DATA")
+                    updateIntent.putExtra("matchId", match.id)
+                    context.sendBroadcast(updateIntent)
+                }
+            }, 2 * 60 * 1000L) // 2 minutes delay
         }
     }
 
