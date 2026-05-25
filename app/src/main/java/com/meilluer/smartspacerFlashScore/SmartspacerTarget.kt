@@ -11,18 +11,21 @@ import com.kieronquinn.app.smartspacer.sdk.utils.TargetTemplate
 class Target : SmartspacerTargetProvider() {
 
     override fun getSmartspaceTargets(smartspacerId: String): List<SmartspaceTarget> {
-        // If no active match is running, return an empty list so the widget is clean and dismissed
-        if (!MatchData.flag) {
+        // Resolve the active display match (user selected or auto-recent live feed)
+        val match = MatchData.getSelectedMatch()
+        
+        // If no match is active, or the active match visibility is disabled, hide target
+        if (match == null || !match.target_visibility) {
             return emptyList()
         }
 
         val targets = mutableListOf<SmartspaceTarget>()
         
-        // Build the title (e.g., "Arsenal 2 - 1 Chelsea")
-        val displayTitle = "${MatchData.homeTeam} ${MatchData.homeScore} - ${MatchData.awayScore} ${MatchData.awayTeam}"
+        // Build the title (e.g., "Real Madrid 2 - 1 Barcelona")
+        val displayTitle = "${match.homeTeam} ${match.homeScore} - ${match.awayScore} ${match.awayTeam}"
         
-        // Build the subtitle (using extras which holds current scorers or match events)
-        val displaySubtitle = MatchData.extras
+        // Build the subtitle (stating goal events or live highlights)
+        val displaySubtitle = match.extras
 
         targets.add(
             TargetTemplate.Basic(
@@ -46,7 +49,10 @@ class Target : SmartspacerTargetProvider() {
     }
 
     override fun onDismiss(smartspacerId: String, targetId: String): Boolean {
-        MatchData.flag = false
+        // Hide the selected match details from launcher
+        MatchData.getSelectedMatch()?.let {
+            it.target_visibility = false
+        }
         notifyChange()
         return true
     }

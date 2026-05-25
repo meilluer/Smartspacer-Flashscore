@@ -11,7 +11,10 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -28,6 +31,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var textPermissionStatus: TextView
     private lateinit var textPermissionDesc: TextView
     private lateinit var btnGrantPermission: Button
+
+    private lateinit var spinnerMatchSelector: Spinner
+    private lateinit var spinnerAdapter: ArrayAdapter<String>
+    private val spinnerOptionsList = mutableListOf<String>()
 
     private lateinit var textMatchStatus: TextView
     private lateinit var textHomeTeam: TextView
@@ -49,6 +56,7 @@ class MainActivity : AppCompatActivity() {
 
     private val matchUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            updateSpinnerOptions()
             updateMatchUI()
         }
     }
@@ -65,6 +73,9 @@ class MainActivity : AppCompatActivity() {
             showNotificationListenerDialog()
         }
 
+        // Setup Spinner Adapter and Event Listener
+        setupSpinner()
+
         // Setup Simulator Button Listeners
         setupSimulatorListeners()
 
@@ -78,15 +89,17 @@ class MainActivity : AppCompatActivity() {
         )
 
         // Load initial data
+        updateSpinnerOptions()
         updateMatchUI()
     }
 
     override fun onResume() {
         super.onResume()
         checkNotificationPermission()
+        updateSpinnerOptions()
         updateMatchUI()
         
-        // Triggers popups sequentially to ensure an elegant first-run onboarding experience
+        // Sequential popups trigger
         showSequentialPermissionPopups()
     }
 
@@ -99,6 +112,8 @@ class MainActivity : AppCompatActivity() {
         textPermissionStatus = findViewById(R.id.textPermissionStatus)
         textPermissionDesc = findViewById(R.id.textPermissionDesc)
         btnGrantPermission = findViewById(R.id.btnGrantPermission)
+
+        spinnerMatchSelector = findViewById(R.id.spinnerMatchSelector)
 
         textMatchStatus = findViewById(R.id.textMatchStatus)
         textHomeTeam = findViewById(R.id.textHomeTeam)
@@ -115,8 +130,60 @@ class MainActivity : AppCompatActivity() {
         btnSimReset = findViewById(R.id.btnSimReset)
     }
 
+    private fun setupSpinner() {
+        spinnerAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            spinnerOptionsList
+        ).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        spinnerMatchSelector.adapter = spinnerAdapter
+
+        spinnerMatchSelector.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (position >= 0 && position < spinnerOptionsList.size) {
+                    val selectedOption = spinnerOptionsList[position]
+                    MatchData.selectedMatchId = if (selectedOption == "Auto (Most Recent Live)") {
+                        "AUTO"
+                    } else {
+                        selectedOption
+                    }
+                    updateMatchUI()
+                    notifyTargetChanges()
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun updateSpinnerOptions() {
+        val currentSelection = if (MatchData.selectedMatchId == "AUTO") {
+            "Auto (Most Recent Live)"
+        } else {
+            MatchData.selectedMatchId
+        }
+
+        spinnerOptionsList.clear()
+        spinnerOptionsList.add("Auto (Most Recent Live)")
+        
+        // Add all active matches tracked in global state
+        spinnerOptionsList.addAll(MatchData.activeMatches.keys)
+        
+        spinnerAdapter.notifyDataSetChanged()
+
+        // Restore selected item index
+        val selectIndex = spinnerOptionsList.indexOf(currentSelection)
+        if (selectIndex >= 0) {
+            spinnerMatchSelector.setSelection(selectIndex)
+        } else {
+            spinnerMatchSelector.setSelection(0)
+            MatchData.selectedMatchId = "AUTO"
+        }
+    }
+
     private fun showSequentialPermissionPopups() {
-        // 1. First prompt for runtime Post Notifications if Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val permissionStatus = ContextCompat.checkSelfPermission(
                 this,
@@ -125,11 +192,10 @@ class MainActivity : AppCompatActivity() {
             if (permissionStatus != PackageManager.PERMISSION_GRANTED && !hasPromptedPostNotification) {
                 hasPromptedPostNotification = true
                 showPostNotificationDialog()
-                return // Pause listener dialog until they respond
+                return
             }
         }
 
-        // 2. Prompt for Notification Listener Service
         if (!isNotificationServiceEnabled() && !hasPromptedListenerPermission) {
             hasPromptedListenerPermission = true
             showNotificationListenerDialog()
@@ -153,7 +219,6 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Maybe Later") { dialog, _ ->
                 dialog.dismiss()
-                // Proceed to check for next permission popup
                 if (!isNotificationServiceEnabled() && !hasPromptedListenerPermission) {
                     hasPromptedListenerPermission = true
                     showNotificationListenerDialog()
@@ -185,7 +250,6 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_POST_NOTIFICATIONS) {
-            // Proceed to check listener permission popup next
             if (!isNotificationServiceEnabled() && !hasPromptedListenerPermission) {
                 hasPromptedListenerPermission = true
                 showNotificationListenerDialog()
@@ -197,12 +261,12 @@ class MainActivity : AppCompatActivity() {
         val isPermissionGranted = isNotificationServiceEnabled()
         if (isPermissionGranted) {
             textPermissionStatus.text = "ACTIVE"
-            textPermissionStatus.setTextColor(Color.parseColor("#4CD137")) // Vibrant Green
+            textPermissionStatus.setTextColor(Color.parseColor("#4CD137"))
             textPermissionDesc.text = "Successfully intercepting live score feeds from FlashScore."
             btnGrantPermission.visibility = View.GONE
         } else {
             textPermissionStatus.text = "ACTION REQUIRED"
-            textPermissionStatus.setTextColor(Color.parseColor("#FF9F43")) // Vibrant Amber
+            textPermissionStatus.setTextColor(Color.parseColor("#FF9F43"))
             textPermissionDesc.text = "Notification Access is currently disabled. Tap 'Grant Access' to enable interceptor."
             btnGrantPermission.visibility = View.VISIBLE
         }
@@ -215,32 +279,57 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateMatchUI() {
-        textHomeTeam.text = MatchData.homeTeam
-        textAwayTeam.text = MatchData.awayTeam
-        textHomeScore.text = MatchData.homeScore
-        textAwayScore.text = MatchData.awayScore
-        textScorers.text = MatchData.scorers
+        val match = MatchData.getSelectedMatch()
+        
+        if (match != null) {
+            textHomeTeam.text = match.homeTeam
+            textAwayTeam.text = match.awayTeam
+            textHomeScore.text = match.homeScore
+            textAwayScore.text = match.awayScore
+            textScorers.text = match.scorers
 
-        if (MatchData.flag) {
-            textMatchStatus.text = MatchData.extras.uppercase()
-            textMatchStatus.setBackgroundColor(Color.parseColor("#2E3558")) // Sleek blue
-            textMatchStatus.setTextColor(Color.parseColor("#FFFFFF"))
-        } else {
-            if (MatchData.extras == "Finished") {
-                textMatchStatus.text = "FINISHED"
-                textMatchStatus.setBackgroundColor(Color.parseColor("#E84118")) // Vibrant red
+            if (match.target_visibility) {
+                textMatchStatus.text = match.extras.uppercase()
+                textMatchStatus.setBackgroundColor(Color.parseColor("#2E3558"))
                 textMatchStatus.setTextColor(Color.parseColor("#FFFFFF"))
             } else {
-                textMatchStatus.text = "NO ACTIVE MATCH"
-                textMatchStatus.setBackgroundColor(Color.parseColor("#1B1E36")) // Muted dark
-                textMatchStatus.setTextColor(Color.parseColor("#A0A5B5"))
+                if (match.extras == "Finished") {
+                    textMatchStatus.text = "FINISHED"
+                    textMatchStatus.setBackgroundColor(Color.parseColor("#E84118"))
+                    textMatchStatus.setTextColor(Color.parseColor("#FFFFFF"))
+                } else {
+                    textMatchStatus.text = "INACTIVE"
+                    textMatchStatus.setBackgroundColor(Color.parseColor("#1B1E36"))
+                    textMatchStatus.setTextColor(Color.parseColor("#A0A5B5"))
+                }
             }
+        } else {
+            // Fallback for default state when list is empty
+            textHomeTeam.text = "Home Team"
+            textAwayTeam.text = "Away Team"
+            textHomeScore.text = "0"
+            textAwayScore.text = "0"
+            textScorers.text = "No goal scorers yet"
+            
+            textMatchStatus.text = "NO ACTIVE MATCH"
+            textMatchStatus.setBackgroundColor(Color.parseColor("#1B1E36"))
+            textMatchStatus.setTextColor(Color.parseColor("#A0A5B5"))
+        }
+    }
+
+    private fun notifyTargetChanges() {
+        try {
+            com.kieronquinn.app.smartspacer.sdk.provider.SmartspacerTargetProvider.notifyChange(
+                this, Target::class.java, "notify"
+            )
+        } catch (e: Exception) {
+            // Safe fallback inside environments lacking active SDK bindings
         }
     }
 
     private fun setupSimulatorListeners() {
+        // SIMULATE MATCH A (Real Madrid vs Barcelona)
         btnSimStart.setOnClickListener {
-            MatchData.reset()
             FlashScoreNotificationParser.parse(
                 this,
                 "Real Madrid - Barcelona",
@@ -249,17 +338,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSimHomeGoal.setOnClickListener {
-            // Guarantee starting match if it hasn't
-            if (MatchData.homeTeam == "Home Team") {
-                MatchData.homeTeam = "Real Madrid"
-                MatchData.awayTeam = "Barcelona"
-            }
-            val currentHome = MatchData.homeScore.toIntOrNull() ?: 0
-            val currentAway = MatchData.awayScore.toIntOrNull() ?: 0
+            val match = MatchData.activeMatches["Real Madrid - Barcelona"]
+            val currentHome = match?.homeScore?.toIntOrNull() ?: 0
+            val currentAway = match?.awayScore?.toIntOrNull() ?: 0
             val nextHome = currentHome + 1
             val minute = random.nextInt(89) + 1
-            val scorersList = listOf("Benzema", "Vinicius Jr", "Modric", "Rodrygo", "Bellingham")
-            val scorer = scorersList[random.nextInt(scorersList.size)]
+            val scorers = listOf("Benzema", "Vinicius Jr", "Bellingham", "Rodrygo")
+            val scorer = scorers[random.nextInt(scorers.size)]
 
             FlashScoreNotificationParser.parse(
                 this,
@@ -269,17 +354,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSimAwayGoal.setOnClickListener {
-            // Guarantee starting match if it hasn't
-            if (MatchData.homeTeam == "Home Team") {
-                MatchData.homeTeam = "Real Madrid"
-                MatchData.awayTeam = "Barcelona"
-            }
-            val currentHome = MatchData.homeScore.toIntOrNull() ?: 0
-            val currentAway = MatchData.awayScore.toIntOrNull() ?: 0
+            val match = MatchData.activeMatches["Real Madrid - Barcelona"]
+            val currentHome = match?.homeScore?.toIntOrNull() ?: 0
+            val currentAway = match?.awayScore?.toIntOrNull() ?: 0
             val nextAway = currentAway + 1
             val minute = random.nextInt(89) + 1
-            val scorersList = listOf("Messi", "Lewandowski", "Pedri", "Gavi", "Raphinha")
-            val scorer = scorersList[random.nextInt(scorersList.size)]
+            val scorers = listOf("Messi", "Lewandowski", "Pedri", "Raphinha")
+            val scorer = scorers[random.nextInt(scorers.size)]
 
             FlashScoreNotificationParser.parse(
                 this,
@@ -288,41 +369,40 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        // SIMULATE MATCH B (Arsenal vs Chelsea)
         btnSimHalf.setOnClickListener {
-            if (MatchData.homeTeam == "Home Team") {
-                MatchData.homeTeam = "Real Madrid"
-                MatchData.awayTeam = "Barcelona"
-            }
+            // Automatically kickoffs Arsenal - Chelsea
+            val match = MatchData.activeMatches["Arsenal - Chelsea"]
+            val currentHome = match?.homeScore?.toIntOrNull() ?: 0
+            val currentAway = match?.awayScore?.toIntOrNull() ?: 0
+            val nextHome = currentHome + 1
+            val minute = random.nextInt(40) + 1
+            
             FlashScoreNotificationParser.parse(
                 this,
-                "Real Madrid - Barcelona",
-                "Half-Time\nScore remains ${MatchData.homeScore} - ${MatchData.awayScore}"
+                "Arsenal - Chelsea",
+                "⚽ $minute' Goal! [$nextHome] - $currentAway (Saka)"
             )
         }
 
         btnSimFull.setOnClickListener {
-            if (MatchData.homeTeam == "Home Team") {
-                MatchData.homeTeam = "Real Madrid"
-                MatchData.awayTeam = "Barcelona"
-            }
+            // Simulates an equalizer and finished state for Arsenal - Chelsea
+            val match = MatchData.activeMatches["Arsenal - Chelsea"]
+            val currentHome = match?.homeScore?.toIntOrNull() ?: 1
+            val nextAway = currentHome // Makes it a draw e.g. 1 - 1
+            
             FlashScoreNotificationParser.parse(
                 this,
-                "Real Madrid - Barcelona",
-                "Finished\nFinal Score: ${MatchData.homeScore} - ${MatchData.awayScore}"
+                "Arsenal - Chelsea",
+                "⚽ 88' Goal! $currentHome - [$nextAway] (Palmer)\nFinished\nFinal Score: $currentHome - $nextAway"
             )
         }
 
         btnSimReset.setOnClickListener {
             MatchData.reset()
+            updateSpinnerOptions()
             updateMatchUI()
-            // Notify target provider to clear widget
-            try {
-                com.kieronquinn.app.smartspacer.sdk.provider.SmartspacerTargetProvider.notifyChange(
-                    this, Target::class.java, "notify"
-                )
-            } catch (e: Exception) {
-                // Ignore if SDK is not active or initialized
-            }
+            notifyTargetChanges()
         }
     }
 }

@@ -9,55 +9,78 @@ object FlashScoreNotificationParser {
     private const val TAG = "FlashScoreParser"
 
     fun parse(context: Context, title: String, subtitle: String) {
-        Log.d(TAG, "Parsing - Title: \"$title\" | Subtitle: \"$subtitle\"")
+        Log.d(TAG, "Parsing incoming feed - Title: \"$title\" | Subtitle: \"$subtitle\"")
 
-        // 1. Reset or set active flag
-        MatchData.title = title
-        MatchData.subtitle = subtitle
-        MatchData.flag = true // Keep tracking active match
+        // 1. Identify Match Teams and derive clean MatchId
+        val teams = parseTeamsFromTitle(title)
+        if (teams == null) {
+            Log.e(TAG, "Failed to parse teams from title: \"$title\". Ignoring notification.")
+            return
+        }
+        val (homeTeamClean, awayTeamClean) = teams
+        val matchId = "$homeTeamClean - $awayTeamClean"
 
-        // 2. Parse Team Names from Title
-        parseTeamsFromTitle(title)
+        // 2. Retrieve or instantiate a new MatchState for this clean matchId
+        val match = MatchData.activeMatches.getOrPut(matchId) {
+            Log.d(TAG, "Discovered new match: \"$matchId\". Creating dynamic instance.")
+            MatchState(
+                id = matchId,
+                homeTeam = homeTeamClean,
+                awayTeam = awayTeamClean
+            )
+        }
 
-        // 3. Handle specific match status in title or subtitle
+        // 3. Update standard metadata and timestamp
+        match.title = title
+        match.subtitle = subtitle
+        match.lastUpdated = System.currentTimeMillis()
+        match.flag = true // Keep tracking active match
+
+        // 4. Handle specific match status inside clean match state
         val contentLower = "$title\n$subtitle".lowercase()
         when {
-            "lineups are available" in contentLower || "lineups" in contentLower -> {
-                MatchData.extras = "Lineups are available"
+            "lineups are available" in contentLower || "lineups" in contentLower || "starts soon" in contentLower || "about to start" in contentLower || "starts in" in contentLower -> {
+                match.extras = "Lineups are available"
+                match.target_visibility = true
             }
             "half-time" in contentLower || "half time" in contentLower -> {
-                MatchData.extras = "Half-Time"
+                match.extras = "Half-Time"
+                match.target_visibility = true
             }
             "finished" in contentLower || "full-time" in contentLower || "ft" in contentLower || "after extra time" in contentLower -> {
-                MatchData.extras = "Finished"
-                MatchData.flag = false // Match is complete
+                match.extras = "Finished"
+                match.flag = false // Match complete
+                match.target_visibility = false
             }
             "postponed" in contentLower -> {
-                MatchData.extras = "Postponed"
-                MatchData.flag = false
+                match.extras = "Postponed"
+                match.flag = false
+                match.target_visibility = false
             }
             "goal" in contentLower || "⚽" in contentLower -> {
-                MatchData.extras = "Goal scored!"
-                parseGoalDetails(subtitle)
+                match.extras = "Goal scored!"
+                match.target_visibility = true
+                parseGoalDetails(match, subtitle)
             }
             else -> {
-                if (MatchData.extras.isBlank() || MatchData.extras == "No active match") {
-                    MatchData.extras = "In-Play"
+                if (match.extras.isBlank() || match.extras == "Match started") {
+                    match.extras = "In-Play"
                 }
+                match.target_visibility = true
             }
         }
 
-        Log.d(TAG, "Parsed MatchData state: " +
-                "Home: ${MatchData.homeTeam} (${MatchData.homeScore}) | " +
-                "Away: ${MatchData.awayTeam} (${MatchData.awayScore}) | " +
-                "Scorers: ${MatchData.scorers} | " +
-                "Status: ${MatchData.extras}")
+        Log.d(TAG, "Successfully updated match state: \"$matchId\" | " +
+                "Score: ${match.homeScore} - ${match.awayScore} | " +
+                "Scorers: ${match.scorers} | " +
+                "Status: ${match.extras}")
 
-        // 4. Send a local broadcast to MainActivity to refresh UI dynamically
+        // 5. Send a local broadcast to MainActivity to refresh UI Spinner and Card details
         val updateIntent = Intent("com.meilluer.smartspacerFlashScore.UPDATE_MATCH_DATA")
+        updateIntent.putExtra("matchId", matchId)
         context.sendBroadcast(updateIntent)
 
-        // 5. Notify Smartspacer of Target/Widget changes
+        // 6. Notify Smartspacer of Target/Widget changes
         try {
             SmartspacerTargetProvider.notifyChange(context, Target::class.java, "notify")
         } catch (e: Exception) {
@@ -65,19 +88,19 @@ object FlashScoreNotificationParser {
         }
     }
 
-    private fun parseTeamsFromTitle(title: String) {
-        val parts = title.split(" - ")
+    private fun parseTeamsFromTitle(title: String): Pair<String, String>? {
+        var parts = title.split(" - ")
+        if (parts.size != 2) {
+            parts = title.split("-")
+        }
         if (parts.size == 2) {
-            MatchData.homeTeam = cleanTeamName(parts[0])
-            MatchData.awayTeam = cleanTeamName(parts[1])
-        } else {
-            // Fallback: If hyphen is differently spaced or format differs
-            val singleHyphenParts = title.split("-")
-            if (singleHyphenParts.size == 2) {
-                MatchData.homeTeam = cleanTeamName(singleHyphenParts[0])
-                MatchData.awayTeam = cleanTeamName(singleHyphenParts[1])
+            val home = cleanTeamName(parts[0])
+            val away = cleanTeamName(parts[1])
+            if (home.isNotBlank() && away.isNotBlank()) {
+                return Pair(home, away)
             }
         }
+        return null
     }
 
     /**
@@ -89,14 +112,13 @@ object FlashScoreNotificationParser {
             .trim()
     }
 
-    private fun parseGoalDetails(subtitle: String) {
+    private fun parseGoalDetails(match: MatchState, subtitle: String) {
         val lines = subtitle.lines()
         val namesList = mutableListOf<String>()
         var extractedHomeScore: Int? = null
         var extractedAwayScore: Int? = null
 
         // Regex patterns for extracting goals, score updates, and scorers
-        // e.g. Goal! [1] - 0 or Goal! 1 - [2] or ⚽ 44' Goal! [1] - 0 Benzema
         val scoreRegex = Regex("""(?:Goal!|⚽)?\s*(\[\d+]|\d+)\s*-\s*(\[\d+]|\d+)""", RegexOption.IGNORE_CASE)
         val bracketsDigitRegex = Regex("""\d+""")
 
@@ -109,14 +131,12 @@ object FlashScoreNotificationParser {
                 val leftPart = scoreMatch.groupValues[1]
                 val rightPart = scoreMatch.groupValues[2]
 
-                // If a score has brackets, it signifies the team that just scored (e.g. "[2] - 1" or "1 - [2]")
                 // Extract digits from the score parts
                 bracketsDigitRegex.find(leftPart)?.value?.toIntOrNull()?.let { extractedHomeScore = it }
                 bracketsDigitRegex.find(rightPart)?.value?.toIntOrNull()?.let { extractedAwayScore = it }
             }
 
             // 2. Extract scorer using robust elimination parsing
-            // Let's filter only lines containing Goal! or ⚽
             if (line.contains("Goal!", ignoreCase = true) || line.contains("⚽")) {
                 val scorer = extractScorerFromLine(line)
                 if (scorer.isNotBlank() && scorer != "Goal!") {
@@ -125,12 +145,12 @@ object FlashScoreNotificationParser {
             }
         }
 
-        // Apply scores to global variable
-        extractedHomeScore?.let { MatchData.homeScore = it.toString() }
-        extractedAwayScore?.let { MatchData.awayScore = it.toString() }
+        // Apply scores to this specific match state
+        extractedHomeScore?.let { match.homeScore = it.toString() }
+        extractedAwayScore?.let { match.awayScore = it.toString() }
 
         if (namesList.isNotEmpty()) {
-            val currentScorersList = MatchData.scorers
+            val currentScorersList = match.scorers
                 .split(",")
                 .map { it.trim() }
                 .filter { it.isNotBlank() && it != "No goal scorers yet" && it != "Scorer not available" }
@@ -143,16 +163,12 @@ object FlashScoreNotificationParser {
                 }
             }
 
-            MatchData.scorers = currentScorersList.joinToString(", ").ifBlank { "Scorer not available" }
-            MatchData.extras = "Goal: ${namesList.last()}"
+            match.scorers = currentScorersList.joinToString(", ").ifBlank { "Scorer not available" }
+            match.extras = "Goal: ${namesList.last()}"
         }
     }
 
-    /**
-     * Extracts scorer name by removing known prefixes/suffixes and patterns from a line
-     */
     private fun extractScorerFromLine(line: String): String {
-        // Strip out the ball emoji, timestamps (e.g. 45+2', 12'), the word Goal!, and the scores
         var cleaned = line.replace("⚽", "")
             .replace(Regex("""\b\d+(?:\+\d+)?'\b"""), "") // removes timestamps like 44', 90+2'
             .replace(Regex("""Goal!""", RegexOption.IGNORE_CASE), "")
@@ -160,7 +176,6 @@ object FlashScoreNotificationParser {
             .replace(Regex("""\(\)"""), "") // removes empty parenthesis
             .trim()
 
-        // Strip leading/trailing punctuation and parenthesis if any
         if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
             cleaned = cleaned.substring(1, cleaned.length - 1).trim()
         }
@@ -170,9 +185,6 @@ object FlashScoreNotificationParser {
     }
 }
 
-/**
- * Inner constant patterns for robust regex operations
- */
 object AndrewsRegexPatterns {
     const val SCORE_PATTERN = """\b\d+\b"""
     const val BRACKETS_PATTERN = """[\[\]]"""
