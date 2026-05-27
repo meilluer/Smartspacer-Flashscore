@@ -7,8 +7,9 @@ import android.util.Log
 
 class FlashScoreNotificationService : NotificationListenerService() {
     companion object {
-        private const val TAG = "FlashScoreService"
+        private const val TAG = "ScoreService"
         const val FLASHSCORE_PACKAGE = "eu.livesport.FlashScore_com"
+        const val SOFASCORE_PACKAGE = "com.sofascore.results"
     }
 
     override fun onListenerConnected() {
@@ -20,12 +21,12 @@ class FlashScoreNotificationService : NotificationListenerService() {
         super.onNotificationPosted(sbn)
         sbn?.let {
             val packageName = it.packageName
-            if (packageName == FLASHSCORE_PACKAGE) {
+            if (packageName == FLASHSCORE_PACKAGE || packageName == SOFASCORE_PACKAGE) {
                 val extras = it.notification.extras
                 val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
                 val subtitle = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
 
-                Log.d(TAG, "Intercepted Flashscore Notification!")
+                Log.d(TAG, "Intercepted Notification from package: $packageName")
                 Log.d(TAG, "Raw Title: \"$title\"")
                 Log.d(TAG, "Raw Subtitle: \"$subtitle\"")
 
@@ -38,8 +39,8 @@ class FlashScoreNotificationService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
         sbn?.let {
-            if (it.packageName == FLASHSCORE_PACKAGE) {
-                Log.d(TAG, "FlashScore notification removed from status bar.")
+            if (it.packageName == FLASHSCORE_PACKAGE || it.packageName == SOFASCORE_PACKAGE) {
+                Log.d(TAG, "Sports notification removed from status bar.")
             }
         }
     }

@@ -49,6 +49,14 @@ object FlashScoreNotificationParser {
                 match.target_visibility = true
             }
             "finished" in contentLower || "full-time" in contentLower || "ft" in contentLower || "after extra time" in contentLower -> {
+                // Try to parse the final score from subtitle or title (e.g. "Match finished: 2 - 1" or "Wolves 2 - 1 Olympic FC Finished")
+                val finalScoreRegex = Regex("""(\d+)\s*-\s*(\d+)""")
+                val scoreMatch = finalScoreRegex.find(subtitle) ?: finalScoreRegex.find(title)
+                if (scoreMatch != null) {
+                    match.homeScore = scoreMatch.groupValues[1]
+                    match.awayScore = scoreMatch.groupValues[2]
+                }
+                
                 if (match.flag) { // Only schedule if it was previously active to avoid duplicate handlers
                     match.extras = "Finished"
                     match.flag = false // Match complete
@@ -152,9 +160,13 @@ object FlashScoreNotificationParser {
                 val leftPart = scoreMatch.groupValues[1]
                 val rightPart = scoreMatch.groupValues[2]
 
-                // Extract digits from the score parts
-                bracketsDigitRegex.find(leftPart)?.value?.toIntOrNull()?.let { extractedHomeScore = it }
-                bracketsDigitRegex.find(rightPart)?.value?.toIntOrNull()?.let { extractedAwayScore = it }
+                // Extract digits from the score parts ONLY if they represent the actively changed score marked by brackets!
+                if (leftPart.contains("[") || leftPart.contains("]")) {
+                    bracketsDigitRegex.find(leftPart)?.value?.toIntOrNull()?.let { extractedHomeScore = it }
+                }
+                if (rightPart.contains("[") || rightPart.contains("]")) {
+                    bracketsDigitRegex.find(rightPart)?.value?.toIntOrNull()?.let { extractedAwayScore = it }
+                }
             }
 
             // 2. Extract scorer using robust elimination parsing
