@@ -37,6 +37,9 @@ object FlashScoreNotificationParser {
 
         // 4. Handle specific match status inside clean match state
         val contentLower = "$title\n$subtitle".lowercase()
+        val lines = subtitle.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val latestLineLower = lines.firstOrNull()?.lowercase() ?: ""
+
         when {
             "finished" in contentLower || "full-time" in contentLower || "ft" in contentLower || "after extra time" in contentLower -> {
                 // Try to parse the final score from subtitle or title (e.g. "Match finished: 2 - 1" or "Wolves 2 - 1 Olympic FC Finished")
@@ -65,13 +68,24 @@ object FlashScoreNotificationParser {
                     }, 30 * 60 * 1000L) // 30 minutes delay
                 }
             }
-            "lineups are available" in contentLower || "lineups" in contentLower || "starts soon" in contentLower || "about to start" in contentLower || "starts in" in contentLower -> {
-                match.extras = "Match about to start"
+            "goal" in latestLineLower || "⚽" in latestLineLower -> {
+                match.flag = true
+                match.target_visibility = true
+                parseGoalDetails(context, match, subtitle)
+            }
+            "start of 2nd half" in latestLineLower || "start of second half" in latestLineLower ||
+            ("start of 2nd half" in contentLower || "start of second half" in contentLower) -> {
+                match.extras = "2nd Half"
                 match.flag = true
                 match.target_visibility = true
             }
-            "half-time" in contentLower || "half time" in contentLower || "ht" in contentLower -> {
+            "half-time" in latestLineLower || "half time" in latestLineLower || "ht" in latestLineLower -> {
                 match.extras = "Half-Time"
+                match.flag = true
+                match.target_visibility = true
+            }
+            "lineups are available" in contentLower || "lineups" in contentLower || "starts soon" in contentLower || "about to start" in contentLower || "starts in" in contentLower -> {
+                match.extras = "Match about to start"
                 match.flag = true
                 match.target_visibility = true
             }
@@ -211,7 +225,12 @@ object FlashScoreNotificationParser {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 // Check if the match is still active, hasn't transitioned to HT/FT, and still shows the scorer
                 if (match.extras == scorerText && match.flag && match.extras != "Half Time" && match.extras != "Finished") {
-                    match.extras = "In Play"
+                    val contentLowerDelayed = "${match.title}\n${match.subtitle}".lowercase()
+                    if ("start of 2nd half" in contentLowerDelayed || "start of second half" in contentLowerDelayed) {
+                        match.extras = "2nd Half"
+                    } else {
+                        match.extras = "In Play"
+                    }
                     
                     // Notify Smartspacer
                     try {

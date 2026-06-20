@@ -47,6 +47,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSimHomeGoal: Button
     private lateinit var btnSimAwayGoal: Button
     private lateinit var btnSimHalf: Button
+    private lateinit var btnSimStartSecondHalf: Button
     private lateinit var btnSimFull: Button
     private lateinit var btnSimReset: Button
 
@@ -126,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         btnSimHomeGoal = findViewById(R.id.btnSimHomeGoal)
         btnSimAwayGoal = findViewById(R.id.btnSimAwayGoal)
         btnSimHalf = findViewById(R.id.btnSimHalf)
+        btnSimStartSecondHalf = findViewById(R.id.btnSimStartSecondHalf)
         btnSimFull = findViewById(R.id.btnSimFull)
         btnSimReset = findViewById(R.id.btnSimReset)
     }
@@ -327,74 +329,106 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun getSelectedMatchIdForSimulation(): String {
+        val selected = MatchData.selectedMatchId
+        if (selected == "AUTO") {
+            return MatchData.activeMatches.keys.firstOrNull() ?: "Real Madrid - Barcelona"
+        }
+        return selected
+    }
+
     private fun setupSimulatorListeners() {
-        // SIMULATE MATCH A (Real Madrid vs Barcelona)
         btnSimStart.setOnClickListener {
+            val nextMatch = if (MatchData.activeMatches.containsKey("Real Madrid - Barcelona")) {
+                "Arsenal - Chelsea"
+            } else {
+                "Real Madrid - Barcelona"
+            }
             FlashScoreNotificationParser.parse(
                 this,
-                "Real Madrid - Barcelona",
+                nextMatch,
                 "Match starts soon\nLineups are available"
             )
         }
 
         btnSimHomeGoal.setOnClickListener {
-            val match = MatchData.activeMatches["Real Madrid - Barcelona"]
+            val matchId = getSelectedMatchIdForSimulation()
+            val match = MatchData.activeMatches[matchId]
             val currentHome = match?.homeScore?.toIntOrNull() ?: 0
             val currentAway = match?.awayScore?.toIntOrNull() ?: 0
             val nextHome = currentHome + 1
             val minute = random.nextInt(89) + 1
-            val scorers = listOf("Benzema", "Vinicius Jr", "Bellingham", "Rodrygo")
+            val scorers = if (matchId.contains("Real Madrid")) {
+                listOf("Benzema", "Vinicius Jr", "Bellingham", "Rodrygo")
+            } else {
+                listOf("Saka", "Odegaard", "Martinelli", "Havertz")
+            }
             val scorer = scorers[random.nextInt(scorers.size)]
 
             FlashScoreNotificationParser.parse(
                 this,
-                "Real Madrid - Barcelona",
+                matchId,
                 "⚽ $minute' Goal! [$nextHome] - $currentAway ($scorer)"
             )
         }
 
         btnSimAwayGoal.setOnClickListener {
-            val match = MatchData.activeMatches["Real Madrid - Barcelona"]
+            val matchId = getSelectedMatchIdForSimulation()
+            val match = MatchData.activeMatches[matchId]
             val currentHome = match?.homeScore?.toIntOrNull() ?: 0
             val currentAway = match?.awayScore?.toIntOrNull() ?: 0
             val nextAway = currentAway + 1
             val minute = random.nextInt(89) + 1
-            val scorers = listOf("Messi", "Lewandowski", "Pedri", "Raphinha")
+            val scorers = if (matchId.contains("Real Madrid")) {
+                listOf("Messi", "Lewandowski", "Pedri", "Raphinha")
+            } else {
+                listOf("Palmer", "Jackson", "Mudryk", "Enzo")
+            }
             val scorer = scorers[random.nextInt(scorers.size)]
 
             FlashScoreNotificationParser.parse(
                 this,
-                "Real Madrid - Barcelona",
+                matchId,
                 "⚽ $minute' Goal! $currentHome - [$nextAway] ($scorer)"
             )
         }
 
-        // SIMULATE MATCH B (Arsenal vs Chelsea)
         btnSimHalf.setOnClickListener {
-            // Automatically kickoffs Arsenal - Chelsea
-            val match = MatchData.activeMatches["Arsenal - Chelsea"]
+            val matchId = getSelectedMatchIdForSimulation()
+            val match = MatchData.activeMatches[matchId]
             val currentHome = match?.homeScore?.toIntOrNull() ?: 0
             val currentAway = match?.awayScore?.toIntOrNull() ?: 0
-            val nextHome = currentHome + 1
-            val minute = random.nextInt(40) + 1
             
             FlashScoreNotificationParser.parse(
                 this,
-                "Arsenal - Chelsea",
-                "⚽ $minute' Goal! [$nextHome] - $currentAway (Saka)"
+                matchId,
+                "Half-time. $currentHome - $currentAway"
+            )
+        }
+
+        btnSimStartSecondHalf.setOnClickListener {
+            val matchId = getSelectedMatchIdForSimulation()
+            val match = MatchData.activeMatches[matchId]
+            val currentHome = match?.homeScore?.toIntOrNull() ?: 0
+            val currentAway = match?.awayScore?.toIntOrNull() ?: 0
+            
+            FlashScoreNotificationParser.parse(
+                this,
+                matchId,
+                "Start of 2nd half. $currentHome - $currentAway\nHalf-time. $currentHome - $currentAway"
             )
         }
 
         btnSimFull.setOnClickListener {
-            // Simulates an equalizer and finished state for Arsenal - Chelsea
-            val match = MatchData.activeMatches["Arsenal - Chelsea"]
-            val currentHome = match?.homeScore?.toIntOrNull() ?: 1
-            val nextAway = currentHome // Makes it a draw e.g. 1 - 1
+            val matchId = getSelectedMatchIdForSimulation()
+            val match = MatchData.activeMatches[matchId]
+            val currentHome = match?.homeScore?.toIntOrNull() ?: 0
+            val currentAway = match?.awayScore?.toIntOrNull() ?: 0
             
             FlashScoreNotificationParser.parse(
                 this,
-                "Arsenal - Chelsea",
-                "⚽ 88' Goal! $currentHome - [$nextAway] (Palmer)\nFinished\nFinal Score: $currentHome - $nextAway"
+                matchId,
+                "Finished. $currentHome - $currentAway\nStart of 2nd half. $currentHome - $currentAway\nHalf-time. $currentHome - $currentAway"
             )
         }
 
